@@ -85,6 +85,6 @@ func C(ctx context.Context) error {
   - What path to read?
   - default: "."
 - `--import`
- - Where is your telemetry functions?
- - default: "github.com/example/extensions/telemetry"
+  - Where is your telemetry functions?
+  - default: "github.com/example/extensions/telemetry"
 
