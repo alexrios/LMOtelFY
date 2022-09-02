@@ -87,4 +87,6 @@ func C(ctx context.Context) error {
 - `--import`
   - Where is your telemetry functions?
   - default: "github.com/example/extensions/telemetry"
-
+- `--allowed-dirs`
+  - The list of dir fragments allowed
+  - default: "samples"
