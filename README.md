@@ -90,3 +90,6 @@ func C(ctx context.Context) error {
 - `--allowed-dirs`
   - The list of dir fragments allowed
   - default: "samples"
+- `--disallowed-dirs`
+  - The list of dir fragments disallowed
+  - default: "."
