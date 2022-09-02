@@ -222,7 +222,7 @@ func createOtelStatementsByOperation(op string, telemetryPackage string) []ast.S
 					},
 					Sel: &ast.Ident{Name: "Start"},
 				},
-				// function has two arguments
+				// function has one argument
 				Args: []ast.Expr{
 					// r.Context()
 					&ast.Ident{Name: "ctx"},
