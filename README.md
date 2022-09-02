@@ -4,7 +4,7 @@ Let Me OTel(Open Telemetry) For You
 
 ### What this program does?
 It will look for two situations:
- - Exported functions that has `context.Cotext` as a parameter.
+ - Exported functions that has `context.Context` as a parameter.
  - HTTP handlers
  
 And create:
