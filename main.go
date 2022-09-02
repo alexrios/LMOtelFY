@@ -17,14 +17,14 @@ import (
 )
 
 type Config struct {
-	TelemetryImport string
-	AllowedDirs     []string
-	DryRun          bool
+	TelemetryImport     string
+	AllowedDirFragments []string
+	DryRun              bool
 }
 
-func Contains(allowedPackages []string, target string) bool {
-	for _, pkg := range allowedPackages {
-		if strings.Contains(target, pkg) {
+func PathContainsAnyFragment(allowedDirFragments []string, fullPath string) bool {
+	for _, fragment := range allowedDirFragments {
+		if strings.Contains(fullPath, fragment) {
 			return true
 		}
 	}
@@ -33,16 +33,22 @@ func Contains(allowedPackages []string, target string) bool {
 
 func main() {
 	var path string
+	var importLine string
+	var dirFragmentsFlag string
 	var dryrun bool
 
 	flag.StringVar(&path, "path", ".", "project path")
-	flag.BoolVar(&dryrun, "dry-run", false, "dry run")
+	flag.StringVar(&importLine, "import", "github.com/example/extensions/telemetry", "telemtry import line")
+	flag.StringVar(&dirFragmentsFlag, "allowed-dirs", "samples", "allowed dir fragments")
+	flag.BoolVar(&dryrun, "dry-run", true, "dry run")
+
 	flag.Parse()
 
+	dirFragments := strings.Split(dirFragmentsFlag, ",")
 	config := Config{
-		TelemetryImport: "github.com/dlpco/example/extensions/telemetry",
-		AllowedDirs:     []string{"domain", "gateways"},
-		DryRun:          dryrun,
+		TelemetryImport:     importLine,
+		AllowedDirFragments: dirFragments,
+		DryRun:              dryrun,
 	}
 
 	err := os.Chdir(path)
@@ -57,7 +63,7 @@ func main() {
 		if d.IsDir() && strings.Contains(s, ".") && strings.Contains(s, "proto") {
 			return filepath.SkipDir
 		}
-		if d.IsDir() && Contains(config.AllowedDirs, s) {
+		if d.IsDir() && PathContainsAnyFragment(config.AllowedDirFragments, s) {
 			instrument(s, config)
 		}
 		return nil
