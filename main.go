@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/ast/astutil"
@@ -15,27 +18,53 @@ import (
 
 type Config struct {
 	TelemetryImport string
-	AllowedPackages []string
+	AllowedDirs     []string
+	DryRun          bool
 }
 
-func (c Config) FromPackagesFn() func(string) bool {
-	return func(p string) bool {
-		for _, pkg := range c.AllowedPackages {
-			if pkg == p {
-				return true
-			}
+func Contains(allowedPackages []string, target string) bool {
+	for _, pkg := range allowedPackages {
+		if strings.Contains(target, pkg) {
+			return true
 		}
-		return false
 	}
+	return false
 }
 
 func main() {
+	var path string
+	var dryrun bool
+
+	flag.StringVar(&path, "path", ".", "project path")
+	flag.BoolVar(&dryrun, "dry-run", false, "dry run")
+	flag.Parse()
+
 	config := Config{
 		TelemetryImport: "github.com/dlpco/example/extensions/telemetry",
-		AllowedPackages: []string{"domain", "samples"},
+		AllowedDirs:     []string{"domain", "gateways"},
+		DryRun:          dryrun,
 	}
 
-	instrument("./samples", config)
+	err := os.Chdir(path)
+	if err != nil {
+		panic(err)
+	}
+
+	err = filepath.WalkDir(path, func(s string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && strings.Contains(s, ".") && strings.Contains(s, "proto") {
+			return filepath.SkipDir
+		}
+		if d.IsDir() && Contains(config.AllowedDirs, s) {
+			instrument(s, config)
+		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
 }
 
 func instrument(dir string, cfg Config) {
@@ -44,20 +73,23 @@ func instrument(dir string, cfg Config) {
 	if err != nil {
 		panic(err)
 	}
-	isAllowedPkg := cfg.FromPackagesFn()
 	for _, pkg := range pkgs {
-		if isAllowedPkg(pkg.Name) {
-			for fileName, file := range pkg.Files {
-				analyzeFile(fset, file, cfg)
+		for fileName, file := range pkg.Files {
+			analyzeFile(fset, file, cfg)
 
-				buf := new(bytes.Buffer)
-				err := format.Node(buf, fset, file)
-				switch {
-				case err != nil:
-					fmt.Printf("error: %v\n", err)
-					//ioutil.WriteFile(fileName, buf.Bytes(), 0664)
-				case fileName[len(fileName)-8:] != "_test.go":
+			buf := new(bytes.Buffer)
+			err := format.Node(buf, fset, file)
+			switch {
+			case err != nil:
+				fmt.Printf("error: %v\n", err)
+				if !cfg.DryRun {
+					os.WriteFile(fileName, buf.Bytes(), 0664)
+				}
+			case fileName[len(fileName)-8:] != "_test.go":
+				if cfg.DryRun {
 					fmt.Fprintln(os.Stdout, buf.String())
+				} else {
+					os.WriteFile(fileName, buf.Bytes(), 0664)
 				}
 			}
 		}
@@ -72,11 +104,21 @@ func analyzeFile(fset *token.FileSet, file *ast.File, cfg Config) {
 				astutil.AddImport(fset, file, cfg.TelemetryImport)
 				otel := createOtelStatementsByOperation(fmt.Sprintf(`"%s.%s"`, file.Name.Name, fn.Name.Name), telemetryPackageID(cfg.TelemetryImport))
 				fn.Body.List = append(otel, fn.Body.List...)
+				for _, v := range fn.Body.List {
+					if exp, ok := v.(*ast.IfStmt); ok && isIfErrBlock(exp) {
+						exp.Body.List = append(createRecordErrorStmt(), exp.Body.List...)
+					}
+				}
 			}
 			if isExportedWithContext(fn) {
 				astutil.AddImport(fset, file, cfg.TelemetryImport)
 				otel := createOtelStatementsByOperation(fmt.Sprintf(`"%s.%s"`, file.Name.Name, fn.Name.Name), telemetryPackageID(cfg.TelemetryImport))
 				fn.Body.List = append(otel, fn.Body.List...)
+				for _, v := range fn.Body.List {
+					if exp, ok := v.(*ast.IfStmt); ok && isIfErrBlock(exp) {
+						exp.Body.List = append(createRecordErrorStmt(), exp.Body.List...)
+					}
+				}
 			}
 		}
 		return true
@@ -111,6 +153,33 @@ func isExportedWithContext(fn *ast.FuncDecl) bool {
 		}
 	}
 
+	return false
+}
+
+func isIfErrBlock(ifStmt *ast.IfStmt) bool {
+	// is: (err != nil)
+	if binExpr, ok := ifStmt.Cond.(*ast.BinaryExpr); ok {
+		// is: !=
+		if binExpr.Op != token.NEQ {
+			return false
+		}
+		// Check left hand identifier (err)
+		if ident, ok := binExpr.X.(*ast.Ident); ok {
+			if ident.Obj == nil {
+				return false
+			}
+			if ident.Obj.Kind != ast.Var || ident.Name != "err" {
+				return false
+			}
+		}
+		// Check right hand identifier (nil)
+		if ident, ok := binExpr.Y.(*ast.Ident); ok {
+			if ident.Obj != nil || ident.Name != "nil" {
+				return false
+			}
+		}
+		return true
+	}
 	return false
 }
 
@@ -170,4 +239,22 @@ func createOtelStatementsByOperation(op string, telemetryPackage string) []ast.S
 	}
 
 	return []ast.Stmt{&a1, &a2}
+}
+
+func createRecordErrorStmt() []ast.Stmt {
+	// thes statement is a call expr:
+	// span.RecordError(err)
+	x := ast.ExprStmt{
+		X: &ast.CallExpr{
+			// Finish from 'span' identifier
+			Fun: &ast.SelectorExpr{
+				X:   &ast.Ident{Name: "span"},
+				Sel: &ast.Ident{Name: "RecordError"},
+			},
+			Args: []ast.Expr{
+				&ast.Ident{Name: "err"},
+			},
+		},
+	}
+	return []ast.Stmt{&x}
 }
