@@ -5,7 +5,7 @@ Let Me OTel(Open Telemetry) For You
 ### What this program does?
 It will look for two situations:
  - Exported functions that has `context.Cotext` as a parameter.
- - http handlers
+ - HTTP handlers
  
 And create:
 - `Start()` new span made by "`package`.`function name`".
