@@ -16,6 +16,8 @@ And create:
 ##### Examples
 This code:
 ```go
+pakage samples
+
 import (
 	"context"
 	"errors"
@@ -44,6 +46,8 @@ func C(ctx context.Context) error {
 
 will turn into this:
 ```go 
+pakage samples
+
 import (
 	"context"
 	"errors"
